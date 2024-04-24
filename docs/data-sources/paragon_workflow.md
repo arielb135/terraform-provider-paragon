@@ -16,12 +16,12 @@ Fetches a specific workflow by description. Currently only ID is returned.
 data "paragon_workflow" "example" {
   project_id     = "your_project_id"
   integration_id = "your_integration_id"
-  description    = "your_workflow_description"
+  description    = "the name you've given to your workflow"
 }
 ```
 
 ## Errors
-Error will be thrown if the organization is not found.
+Error will be thrown if the workflow is not found.
 
 ## Schema
 
@@ -29,7 +29,7 @@ Error will be thrown if the organization is not found.
 
 - `project_id` (String, Required) The ID of the project.
 - `integration_id` (String, Required) The ID of the integration.
-- `The ID of the integration.` (String, Required) The description of the workflow to search for.
+- `description` (String, Required) The description of the workflow to search for.
 
 ### Attributes Reference
 
