@@ -29,7 +29,8 @@ resource "paragon_integration_status" "integration_status" {
 resource "paragon_workflow_deployment" "enable_this_workflow" {
   project_id  = "e0da0789-cd90-4ca7-897b-8a89404eb329"
   workflow_id = data.paragon_workflow.wfdata.id
-  depends_on = [paragon_integration_status.integration_status]
+  version     = 1
+  depends_on  = [paragon_integration_status.integration_status]
 }
 ```
 
@@ -49,6 +50,7 @@ data "paragon_workflow" "wfdata" {
 resource "paragon_workflow_deployment" "enable_this_workflow" {
   project_id  = "e0da0789-cd90-4ca7-897b-8a89404eb329"
   workflow_id = data.paragon_workflow.wfdata.id
+  version     = 1
 }
 ```
 
@@ -57,6 +59,7 @@ resource "paragon_workflow_deployment" "enable_this_workflow" {
 ### Argument Reference
 - `project_id` (String, Required) Identifier of the project of the integration to enable.
 - `workflow_id` (String, Required) Identifier of the workflow to deploy.
+- `version` (Number, Required) The sole purpose of the version is to trigger latest deployment - if you had changes in your deployment, and you wish to deploy them - change the version number to any number different from what you have in the state.
 
 ### Attributes Reference
 
@@ -72,6 +75,7 @@ Here's a state sample
   "id": "c4a133f8-0314-463f-b3f1-d566bb69a7c1",
   "project_id": "e0da0789-cd90-4ca7-897b-8a89404eb329",
   "workflow_id": "fbf8d8b8-c1e7-57a1-b7a8-6a8f895e940f",
+  "version": 1,
   "deployed": true
 }
 ```
