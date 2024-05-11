@@ -9,9 +9,35 @@ description: |-
 
 Controls the deployment of a workflow within a project - Use this resource to enable a workflow.
 
+~> **IMPORTANT:** 
+The integration must be enabled in order for the workflow to be deployed. If you manage the integration via terraform, make sure to add depends_on on the `paragon_integration_status` resource to avoid race conditions. 
+
+### Depends on example
+```terraform
+data "paragon_workflow" "wfdata" {
+  project_id     = "e0da0789-cd90-4ca7-897b-8a89404eb329"
+  integration_id = "fb549b70-658b-4a14-9318-4dca3a88bfa7"
+  description    = "your workflow description"
+}
+
+resource "paragon_integration_status" "integration_status" {
+  project_id = "e0da0789-cd90-4ca7-897b-8a89404eb329"
+  integration_id = "fb549b70-658b-4a14-9318-4dca3a88bfa7"
+  active = true
+}
+
+resource "paragon_workflow_deployment" "enable_this_workflow" {
+  project_id  = "e0da0789-cd90-4ca7-897b-8a89404eb329"
+  workflow_id = data.paragon_workflow.wfdata.id
+  depends_on = [paragon_integration_status.integration_status]
+}
+```
+
+
 ## Example Usage
 
 Use `paragon_workflow` data source to find out the relevant `workflow_id`.
+
 
 ```terraform
 data "paragon_workflow" "wfdata" {
