@@ -21,36 +21,37 @@ type WorkflowMigration struct {
 }
 
 
-func (c *Client) CreateWorkflowDeployment(ctx context.Context, projectID, workflowID string) (string, error) {
-    url := fmt.Sprintf("%s/projects/%s/workflows/%s/deployments", c.baseURL, projectID, workflowID)
+    func (c *Client) CreateWorkflowDeployment(ctx context.Context, projectID, workflowID string) (string, error) {
+        url := fmt.Sprintf("%s/projects/%s/workflows/%s/deployments", c.baseURL, projectID, workflowID)
 
-    req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-    if err != nil {
-        return "", err
-    }
-    req.Header.Set("Authorization", "Bearer "+c.accessToken)
+        req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+        if err != nil {
+            return "", err
+        }
+        req.Header.Set("Authorization", "Bearer "+c.accessToken)
 
-    resp, err := c.httpClient.Do(req)
-    if err != nil {
-        return "", err
-    }
-    defer resp.Body.Close()
+        resp, err := c.httpClient.Do(req)
+        if err != nil {
+            return "", err
+        }
+        defer resp.Body.Close()
 
-    if resp.StatusCode != http.StatusCreated {
-        return "", fmt.Errorf("failed to create workflow deployment with status code: %d", resp.StatusCode)
-    }
+        if resp.StatusCode != http.StatusCreated {
+   	        errorMessage := formatErrorMessage(resp)
+   	        return "", fmt.Errorf("%s, status code: %d", errorMessage, resp.StatusCode)
+        }
 
-    var response struct {
-        ID     string `json:"id"`
-        Status string `json:"status"`
-    }
-    err = json.NewDecoder(resp.Body).Decode(&response)
-    if err != nil {
-        return "", err
-    }
+        var response struct {
+            ID     string `json:"id"`
+            Status string `json:"status"`
+        }
+        err = json.NewDecoder(resp.Body).Decode(&response)
+        if err != nil {
+            return "", err
+        }
 
-    return response.ID, nil
-}
+        return response.ID, nil
+    }
 
 func (c *Client) GetWorkflowDeployment(ctx context.Context, projectID, deploymentID string) (*WorkflowDeployment, error) {
     url := fmt.Sprintf("%s/projects/%s/deployments/%s", c.baseURL, projectID, deploymentID)

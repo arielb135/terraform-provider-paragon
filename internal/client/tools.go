@@ -3,7 +3,10 @@ package client
 import (
     "regexp"
     "strings"
+    "encoding/json"
+    "net/http"
     "github.com/hashicorp/terraform-plugin-framework/types"
+    "io/ioutil"
 )
 
 type WebhookBody struct {
@@ -90,4 +93,49 @@ func ConvertStringSliceToTypesStringSlice(slice []string) []types.String {
         result[i] = types.StringValue(value)
     }
     return result
+}
+
+
+func formatErrorMessage(resp *http.Response) string {
+   body, err := ioutil.ReadAll(resp.Body)
+   if err != nil {
+   	return "Error occurred"
+   }
+   defer resp.Body.Close()
+
+   var errorResponse struct {
+   	Message string `json:"message"`
+   	Meta    struct {
+   		Errors []struct {
+   			Error string `json:"error"`
+   		} `json:"errors"`
+   	} `json:"meta"`
+   }
+
+   err = json.Unmarshal(body, &errorResponse)
+   if err != nil {
+   	return "Error occurred"
+   }
+
+   var errorMessage string
+   if errorResponse.Message != "" {
+   	errorMessage = errorResponse.Message
+   } else {
+   	errorMessage = "Error occurred"
+   }
+
+   if len(errorResponse.Meta.Errors) > 0 {
+   	var errorMessages []string
+   	for _, err := range errorResponse.Meta.Errors {
+   		if err.Error != "" {
+   			errorMessages = append(errorMessages, err.Error)
+   		}
+   	}
+
+   	if len(errorMessages) > 0 {
+   		errorMessage += ", " + strings.Join(errorMessages, ", ")
+   	}
+   }
+
+   return errorMessage
 }
