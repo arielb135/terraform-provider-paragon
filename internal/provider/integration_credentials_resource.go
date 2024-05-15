@@ -119,7 +119,7 @@ func (r *integrationCredentialsResource) Schema(_ context.Context, _ resource.Sc
                     "scopes": schema.ListAttribute{
                         Description: "Scopes for OAuth.",
                         ElementType: types.StringType,
-                        Required:    true,
+                        Optional:    true,
                         Sensitive:   true,
                         Validators: []validator.List{   // Change from []validator.String to []validator.List
                             listvalidator.SizeAtLeast(1),
@@ -153,6 +153,8 @@ func (r *integrationCredentialsResource) Create(ctx context.Context, req resourc
         return
     }
 
+    scopesStr := ""
+
     if integration.Type == "custom" {
         if plan.OAuth != nil && integration.CustomIntegration.AuthenticationType != "oauth" {
             resp.Diagnostics.AddError(
@@ -161,6 +163,31 @@ func (r *integrationCredentialsResource) Create(ctx context.Context, req resourc
             )
             return
         }
+
+        if plan.OAuth != nil && !plan.OAuth.Scopes.IsNull() {
+            resp.Diagnostics.AddError(
+                "Unexpected scopes section",
+                "Scopes cannot be specified for custom integrations",
+            )
+            return
+        }
+    } else {
+        if plan.OAuth.Scopes.IsNull() {
+            resp.Diagnostics.AddError(
+                "Missing scopes",
+                "Scopes must be specified for this integration",
+            )
+            return
+        }
+
+        // Extract the scopes
+        var scopes []string
+        diags = plan.OAuth.Scopes.ElementsAs(ctx, &scopes, false)
+        resp.Diagnostics.Append(diags...)
+        if resp.Diagnostics.HasError() {
+            return
+        }
+        scopesStr = strings.Join(scopes, " ")
     }
 
     // Extract the user email from the access token
@@ -172,15 +199,6 @@ func (r *integrationCredentialsResource) Create(ctx context.Context, req resourc
         )
         return
     }
-
-    // Extract the scopes
-    var scopes []string
-    diags = plan.OAuth.Scopes.ElementsAs(ctx, &scopes, false)
-    resp.Diagnostics.Append(diags...)
-    if resp.Diagnostics.HasError() {
-        return
-    }
-    scopesStr := strings.Join(scopes, " ")
 
     // Create the integration credentials
     createCredReq := client.CreateIntegrationCredentialsRequest{
@@ -269,24 +287,28 @@ func (r *integrationCredentialsResource) Read(ctx context.Context, req resource.
 
     scopesStr, ok := credential.Values["scopes"].(string)
     if !ok {
-        resp.Diagnostics.AddError(
-            "Error extracting scopes",
-            "Could not extract scopes from the decrypted credential values",
-        )
-        return
-    }
-
-    scopesArr := strings.Split(scopesStr, " ")
-    var scopesAttr []attr.Value
-    for _, scope := range scopesArr {
-        scopesAttr = append(scopesAttr, types.StringValue(scope))
+        // If scopes are not found in the decrypted credential values, set them as null in the state
+        state.OAuth.Scopes = types.ListNull(types.StringType)
+    } else {
+        // If scopes are found and not empty, split them and store them in the state
+        if scopesStr != "" {
+            scopesArr := strings.Split(scopesStr, " ")
+            var scopesAttr []attr.Value
+            for _, scope := range scopesArr {
+                scopesAttr = append(scopesAttr, types.StringValue(scope))
+            }
+            state.OAuth.Scopes = types.ListValueMust(types.StringType, scopesAttr)
+        } else {
+            // If scopes are found but empty, set them as null in the state
+            state.OAuth.Scopes = types.ListNull(types.StringType)
+        }
     }
 
     // Update the OAuth block in the state
     state.OAuth = &oauthModel{
         ClientID:     types.StringValue(clientID),
         ClientSecret: types.StringValue(clientSecret),
-        Scopes:       types.ListValueMust(types.StringType, scopesAttr),
+        Scopes:       state.OAuth.Scopes,
     }
 
     // Set the refreshed state
@@ -313,6 +335,36 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
         return
     }
 
+     scopesStr := ""
+
+     if state.Provider.ValueString() == "custom" {
+        if !plan.OAuth.Scopes.IsNull() {
+            resp.Diagnostics.AddError(
+                "Invalid scopes",
+                "Scopes must not be specified for custom integrations",
+            )
+            return
+        }
+    } else {
+        if plan.OAuth.Scopes.IsNull() {
+            resp.Diagnostics.AddError(
+                "Missing scopes",
+                "Scopes must be specified for non-custom integrations",
+            )
+            return
+        }
+
+        // Extract the scopes
+        var scopes []string
+        diags = plan.OAuth.Scopes.ElementsAs(ctx, &scopes, false)
+        resp.Diagnostics.Append(diags...)
+        if resp.Diagnostics.HasError() {
+            return
+        }
+        scopesStr = strings.Join(scopes, " ")
+    }
+
+
     projectID := plan.ProjectID.ValueString()
     integrationID := plan.IntegrationID.ValueString()
     credentialID := state.ID.ValueString()
@@ -335,15 +387,6 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
         )
         return
     }
-
-    // Extract the scopes
-    var scopes []string
-    diags = plan.OAuth.Scopes.ElementsAs(ctx, &scopes, false)
-    resp.Diagnostics.Append(diags...)
-    if resp.Diagnostics.HasError() {
-        return
-    }
-    scopesStr := strings.Join(scopes, " ")
 
     // Update the integration credentials
     updateCredReq := client.CreateIntegrationCredentialsRequest{
