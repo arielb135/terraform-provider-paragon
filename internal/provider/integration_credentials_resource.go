@@ -335,6 +335,8 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
         return
     }
 
+     scopesStr := ""
+
      if state.Provider.ValueString() == "custom" {
         if !plan.OAuth.Scopes.IsNull() {
             resp.Diagnostics.AddError(
@@ -351,6 +353,15 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
             )
             return
         }
+
+        // Extract the scopes
+        var scopes []string
+        diags = plan.OAuth.Scopes.ElementsAs(ctx, &scopes, false)
+        resp.Diagnostics.Append(diags...)
+        if resp.Diagnostics.HasError() {
+            return
+        }
+        scopesStr = strings.Join(scopes, " ")
     }
 
 
@@ -376,15 +387,6 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
         )
         return
     }
-
-    // Extract the scopes
-    var scopes []string
-    diags = plan.OAuth.Scopes.ElementsAs(ctx, &scopes, false)
-    resp.Diagnostics.Append(diags...)
-    if resp.Diagnostics.HasError() {
-        return
-    }
-    scopesStr := strings.Join(scopes, " ")
 
     // Update the integration credentials
     updateCredReq := client.CreateIntegrationCredentialsRequest{
