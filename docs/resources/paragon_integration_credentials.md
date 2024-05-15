@@ -16,6 +16,8 @@ The credentials should be stored securely and not exposed in any public reposito
 
 -> **NOTE:** For regular non-custom integration, there's no way verifying what type of authentication they required, so there's no restriction updating them.
 
+-> **NOTE:** `scopes` should not be specified for custom integrations as they are specified in the custom builder.
+
 ## Scopes in oauth app
 Oauth integrations usually come with default scopes that if not supplied - might cause the integration not to work.
 It's highly recommended to check them out (via UI -> Settings -> so you can set them as a resource, for example - the basic jira configurations look like this:
@@ -57,7 +59,7 @@ resource "paragon_integration_credentials" "example" {
 - `oauth` (Object, Required) OAuth credentials for the relevant OAuth service.
   - `client_id` (String, Required) Client ID for the OAuth service.
   - `client_secret` (String, Required) Client secret for the OAuth service.
-  - `scopes` (List of Strings, Required) Scopes for the OAuth service, Please note per integration which are mandatory to avoid choosing incorrect scopes.
+  - `scopes` (List of Strings, Optional) Scopes for the OAuth service, Please note per integration which are mandatory to avoid choosing incorrect scopes. should not be specified for custom integrations.
 
 ### Attributes Reference
 
