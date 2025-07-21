@@ -7,16 +7,37 @@ import (
     "net/http"
 )
 
+type WorkflowStep struct {
+    ID           string                 `json:"id"`
+    DateCreated  string                 `json:"dateCreated"`
+    DateUpdated  string                 `json:"dateUpdated"`
+    Description  string                 `json:"description"`
+    Type         string                 `json:"type"`
+    Parameters   map[string]interface{} `json:"parameters"`
+    Next         string                 `json:"next,omitempty"`
+    Status       string                 `json:"status"`
+    WorkflowID   string                 `json:"workflowId"`
+    Migrations   map[string]interface{} `json:"_migrations"`
+}
+
 type Workflow struct {
-    ID            string   `json:"id"`
-    DateCreated   string   `json:"dateCreated"`
-    DateUpdated   string   `json:"dateUpdated"`
-    Description   string   `json:"description"`
-    ProjectID     string   `json:"projectId"`
-    TeamID        string   `json:"teamId"`
-    IntegrationID string   `json:"integrationId"`
-    WorkflowVersion int    `json:"workflowVersion"`
-    Tags          []string `json:"tags"`
+    ID                    string         `json:"id"`
+    DateCreated          string         `json:"dateCreated"`
+    DateUpdated          string         `json:"dateUpdated"`
+    Description          string         `json:"description"`
+    ProjectID            string         `json:"projectId"`
+    TeamID               string         `json:"teamId"`
+    IntegrationID        string         `json:"integrationId"`
+    WorkflowVersion      int            `json:"workflowVersion"`
+    Tags                 []string       `json:"tags"`
+    IsOnboardingWorkflow bool           `json:"isOnboardingWorkflow"`
+    Steps                []WorkflowStep `json:"steps,omitempty"`
+}
+
+// WorkflowsResponse represents the paginated response from the workflows API
+type WorkflowsResponse struct {
+    Items          []Workflow  `json:"items"`
+    NextPageCursor *string     `json:"nextPageCursor"`
 }
 
 func (c *Client) GetWorkflows(ctx context.Context, projectID, integrationID string) ([]Workflow, error) {
@@ -38,11 +59,11 @@ func (c *Client) GetWorkflows(ctx context.Context, projectID, integrationID stri
         return nil, fmt.Errorf("failed to get workflows with status code: %d", resp.StatusCode)
     }
 
-    var workflows []Workflow
-    err = json.NewDecoder(resp.Body).Decode(&workflows)
+    var workflowsResponse WorkflowsResponse
+    err = json.NewDecoder(resp.Body).Decode(&workflowsResponse)
     if err != nil {
         return nil, err
     }
 
-    return workflows, nil
+    return workflowsResponse.Items, nil
 }
