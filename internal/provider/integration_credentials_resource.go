@@ -2,11 +2,14 @@ package provider
 
 import (
     "context"
+    "fmt"
     "strings"
+    "math/big"
 
     "github.com/hashicorp/terraform-plugin-framework/resource"
     "github.com/hashicorp/terraform-plugin-framework/resource/schema"
     "github.com/hashicorp/terraform-plugin-framework/types"
+    "github.com/hashicorp/terraform-plugin-framework/types/basetypes"
     "github.com/hashicorp/terraform-plugin-framework/attr"
     "github.com/arielb135/terraform-provider-paragon/internal/client"
     "github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -14,6 +17,8 @@ import (
     "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
     "github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
     "github.com/hashicorp/terraform-plugin-framework/schema/validator"
+    "github.com/hashicorp/terraform-plugin-framework/diag"
+    "github.com/hashicorp/terraform-plugin-log/tflog"
 
 )
 
@@ -35,12 +40,13 @@ type integrationCredentialsResource struct {
 
 // integrationCredentialsResourceModel maps the resource schema data.
 type integrationCredentialsResourceModel struct {
-    ID            types.String `tfsdk:"id"`
-    ProjectID     types.String `tfsdk:"project_id"`
-    IntegrationID types.String `tfsdk:"integration_id"`
-    Scheme        types.String `tfsdk:"scheme"`
-    Provider      types.String `tfsdk:"creds_provider"`
-    OAuth         *oauthModel  `tfsdk:"oauth"`
+    ID                 types.String  `tfsdk:"id"`
+    ProjectID          types.String  `tfsdk:"project_id"`
+    IntegrationID      types.String  `tfsdk:"integration_id"`
+    Scheme             types.String  `tfsdk:"scheme"`
+    Provider           types.String  `tfsdk:"creds_provider"`
+    OAuth              *oauthModel   `tfsdk:"oauth"`
+    ExtraConfiguration types.Dynamic `tfsdk:"extra_configuration"`
 }
 
 type oauthModel struct {
@@ -127,8 +133,222 @@ func (r *integrationCredentialsResource) Schema(_ context.Context, _ resource.Sc
                     },
                 },
             },
+            "extra_configuration": schema.DynamicAttribute{
+                Description: "Additional configuration parameters for the integration credentials.",
+                Optional:    true,
+                Sensitive:   true,
+            },
         },
     }
+}
+
+// validateExtraConfiguration validates extra configuration against OAuth field conflicts and provider-specific rules
+func (r *integrationCredentialsResource) validateExtraConfiguration(ctx context.Context, extraConfig types.Dynamic, integration *client.Integration) diag.Diagnostics {
+    var diags diag.Diagnostics
+    
+    if extraConfig.IsNull() || extraConfig.IsUnknown() {
+        return diags
+    }
+    
+    // Define OAuth field names that cannot be used in extra configuration
+    oauthFieldNames := map[string]bool{
+        "clientId":     true,
+        "clientSecret": true,
+        "scopes":       true,
+    }
+    
+    // Get the underlying value from the dynamic type
+    underlyingValue := extraConfig.UnderlyingValue()
+    
+    // Convert to object value and validate the keys
+    if objectValue, ok := underlyingValue.(basetypes.ObjectValue); ok {
+        for key := range objectValue.Attributes() {
+            // Check for OAuth field name conflicts
+            if oauthFieldNames[key] {
+                diags.AddError(
+                    "Invalid extra configuration key",
+                    fmt.Sprintf("Extra configuration key '%s' conflicts with OAuth field names. "+
+                        "The following keys are reserved for OAuth configuration: clientId, clientSecret, scopes", key),
+                )
+            }
+        }
+        
+        // Provider-specific validation
+        if integration != nil {
+            if integration.Type == "custom" {
+                // For custom integrations, validate that extra configuration is appropriate
+                // Custom integrations may have more flexibility with extra configuration
+                // but should still follow basic validation rules
+                if integration.CustomIntegration != nil && integration.CustomIntegration.AuthenticationType != "oauth" {
+                    diags.AddError(
+                        "Invalid extra configuration for custom integration",
+                        fmt.Sprintf("Extra configuration is not supported for custom integrations with authentication type '%s'. "+
+                            "Extra configuration is only supported for OAuth-based custom integrations.", 
+                            integration.CustomIntegration.AuthenticationType),
+                    )
+                }
+            } else {
+                // For non-custom integrations, extra configuration should be used carefully
+                // as it may interfere with the standard integration behavior
+                // This is more of a warning/informational validation
+                if len(objectValue.Attributes()) > 0 {
+                    // Allow extra configuration for non-custom integrations but ensure it's documented
+                    // that users should be careful with these settings
+                }
+            }
+        }
+    }
+    
+    return diags
+}
+
+// getExtraConfigurationKeys extracts the keys from the extra configuration for filtering during reads
+func (r *integrationCredentialsResource) getExtraConfigurationKeys(extraConfig types.Dynamic) []string {
+    var keys []string
+    
+    if extraConfig.IsNull() || extraConfig.IsUnknown() {
+        return keys
+    }
+    
+    // Get the underlying value from the dynamic type
+    underlyingValue := extraConfig.UnderlyingValue()
+    
+    // Convert to object value and extract the keys
+    if objectValue, ok := underlyingValue.(basetypes.ObjectValue); ok {
+        for key := range objectValue.Attributes() {
+            keys = append(keys, key)
+        }
+    }
+    
+    return keys
+}
+
+// convertAPIValueToTerraformValue converts API response values to Terraform attribute values
+func (r *integrationCredentialsResource) convertAPIValueToTerraformValue(value interface{}) attr.Value {
+    switch v := value.(type) {
+    case string:
+        return types.StringValue(v)
+    case bool:
+        return types.BoolValue(v)
+    case float64:
+        return types.NumberValue(big.NewFloat(v))
+    case int:
+        return types.NumberValue(big.NewFloat(float64(v)))
+    case int64:
+        return types.NumberValue(big.NewFloat(float64(v)))
+    default:
+        // For unknown types, convert to string as fallback
+        return types.StringValue(fmt.Sprintf("%v", v))
+    }
+}
+
+// extractExtraConfigurationFromAPI filters API response to include only user-specified extra configuration keys
+func (r *integrationCredentialsResource) extractExtraConfigurationFromAPI(ctx context.Context, apiValues map[string]interface{}, originalKeys []string) (types.Dynamic, error) {
+    if len(originalKeys) == 0 {
+        return types.DynamicNull(), nil
+    }
+    
+    filteredAttributes := make(map[string]attr.Value)
+    attributeTypes := make(map[string]attr.Type)
+    
+    for _, key := range originalKeys {
+        if value, exists := apiValues[key]; exists {
+            terraformValue := r.convertAPIValueToTerraformValue(value)
+            filteredAttributes[key] = terraformValue
+            attributeTypes[key] = terraformValue.Type(ctx)
+        }
+    }
+    
+    if len(filteredAttributes) == 0 {
+        return types.DynamicNull(), nil
+    }
+    
+    // Create object value
+    objectValue, diags := types.ObjectValue(attributeTypes, filteredAttributes)
+    if diags.HasError() {
+        return types.DynamicNull(), fmt.Errorf("failed to create object value: %v", diags)
+    }
+    
+    // Convert to dynamic value
+    dynamicValue := types.DynamicValue(objectValue)
+    
+    return dynamicValue, nil
+}
+
+// extractAllExtraConfigurationFromAPI extracts all non-OAuth keys from API response as extra configuration
+func (r *integrationCredentialsResource) extractAllExtraConfigurationFromAPI(ctx context.Context, apiValues map[string]interface{}) (types.Dynamic, error) {
+    // Define OAuth field names that should be excluded from extra configuration
+    oauthFieldNames := map[string]bool{
+        "clientId":     true,
+        "clientSecret": true,
+        "scopes":       true,
+    }
+    
+    filteredAttributes := make(map[string]attr.Value)
+    attributeTypes := make(map[string]attr.Type)
+    
+    // Extract all keys that are not OAuth fields
+    for key, value := range apiValues {
+        if !oauthFieldNames[key] {
+            terraformValue := r.convertAPIValueToTerraformValue(value)
+            filteredAttributes[key] = terraformValue
+            attributeTypes[key] = terraformValue.Type(ctx)
+        }
+    }
+    
+    if len(filteredAttributes) == 0 {
+        return types.DynamicNull(), nil
+    }
+    
+    // Create object value
+    objectValue, diags := types.ObjectValue(attributeTypes, filteredAttributes)
+    if diags.HasError() {
+        return types.DynamicNull(), fmt.Errorf("failed to create object value: %v", diags)
+    }
+    
+    // Convert to dynamic value
+    dynamicValue := types.DynamicValue(objectValue)
+    
+    return dynamicValue, nil
+}
+
+// mergeCredentialValues merges OAuth values with extra configuration values
+func (r *integrationCredentialsResource) mergeCredentialValues(ctx context.Context, oauth *oauthModel, extraConfig types.Dynamic, scopesStr string) (map[string]any, error) {
+    values := map[string]any{
+        "clientId":     oauth.ClientID.ValueString(),
+        "clientSecret": oauth.ClientSecret.ValueString(),
+        "scopes":       scopesStr,
+    }
+
+    // If extra configuration is provided, merge it with OAuth values
+    if !extraConfig.IsNull() && !extraConfig.IsUnknown() {
+        // Get the underlying value from the dynamic type
+        underlyingValue := extraConfig.UnderlyingValue()
+        
+        // Convert to object value and extract the attributes
+        if objectValue, ok := underlyingValue.(basetypes.ObjectValue); ok {
+            for key, attrValue := range objectValue.Attributes() {
+                // Convert terraform attribute values to Go values
+                switch v := attrValue.(type) {
+                case basetypes.StringValue:
+                    values[key] = v.ValueString()
+                case basetypes.BoolValue:
+                    values[key] = v.ValueBool()
+                case basetypes.NumberValue:
+                    if v.ValueBigFloat() != nil {
+                        if floatVal, accuracy := v.ValueBigFloat().Float64(); accuracy == 0 {
+                            values[key] = floatVal
+                        }
+                    }
+                default:
+                    // For other types, try to get the underlying Go value
+                    values[key] = attrValue
+                }
+            }
+        }
+    }
+
+    return values, nil
 }
 
 // Create creates the resource and sets the initial Terraform state.
@@ -150,6 +370,13 @@ func (r *integrationCredentialsResource) Create(ctx context.Context, req resourc
             "Error retrieving integration",
             "Could not retrieve integration, unexpected error: "+err.Error(),
         )
+        return
+    }
+
+    // Validate extra configuration
+    validationDiags := r.validateExtraConfiguration(ctx, plan.ExtraConfiguration, integration)
+    resp.Diagnostics.Append(validationDiags...)
+    if resp.Diagnostics.HasError() {
         return
     }
 
@@ -200,14 +427,20 @@ func (r *integrationCredentialsResource) Create(ctx context.Context, req resourc
         return
     }
 
+    // Merge OAuth values with extra configuration
+    values, err := r.mergeCredentialValues(ctx, plan.OAuth, plan.ExtraConfiguration, scopesStr)
+    if err != nil {
+        resp.Diagnostics.AddError(
+            "Error merging credential values",
+            "Could not merge OAuth and extra configuration values: "+err.Error(),
+        )
+        return
+    }
+
     // Create the integration credentials
     createCredReq := client.CreateIntegrationCredentialsRequest{
-        Name: email,
-        Values: client.OAuthValues{
-            ClientID:     plan.OAuth.ClientID.ValueString(),
-            ClientSecret: plan.OAuth.ClientSecret.ValueString(),
-            Scopes:       scopesStr,
-        },
+        Name:          email,
+        Values:        values,
         Provider:      integration.Type,
         Scheme:        "oauth_app", // Currently only oauth_app creds are supported
         IntegrationID: integrationID,
@@ -246,6 +479,12 @@ func (r *integrationCredentialsResource) Read(ctx context.Context, req resource.
 
     projectID := state.ProjectID.ValueString()
     credID := state.ID.ValueString()
+
+    // Check if extra configuration was originally specified by the user
+    hasExtraConfigInState := !state.ExtraConfiguration.IsNull() && !state.ExtraConfiguration.IsUnknown()
+    
+    // Add debug logging
+    tflog.Debug(ctx, "Read - hasExtraConfigInState", map[string]interface{}{"hasExtraConfigInState": hasExtraConfigInState})
 
     // Retrieve the decrypted credential
     credential, err := r.client.GetDecryptedCredential(ctx, projectID, credID)
@@ -286,9 +525,10 @@ func (r *integrationCredentialsResource) Read(ctx context.Context, req resource.
     }
 
     scopesStr, ok := credential.Values["scopes"].(string)
+    var scopesList types.List
     if !ok {
         // If scopes are not found in the decrypted credential values, set them as null in the state
-        state.OAuth.Scopes = types.ListNull(types.StringType)
+        scopesList = types.ListNull(types.StringType)
     } else {
         // If scopes are found and not empty, split them and store them in the state
         if scopesStr != "" {
@@ -297,10 +537,10 @@ func (r *integrationCredentialsResource) Read(ctx context.Context, req resource.
             for _, scope := range scopesArr {
                 scopesAttr = append(scopesAttr, types.StringValue(scope))
             }
-            state.OAuth.Scopes = types.ListValueMust(types.StringType, scopesAttr)
+            scopesList = types.ListValueMust(types.StringType, scopesAttr)
         } else {
             // If scopes are found but empty, set them as null in the state
-            state.OAuth.Scopes = types.ListNull(types.StringType)
+            scopesList = types.ListNull(types.StringType)
         }
     }
 
@@ -308,7 +548,24 @@ func (r *integrationCredentialsResource) Read(ctx context.Context, req resource.
     state.OAuth = &oauthModel{
         ClientID:     types.StringValue(clientID),
         ClientSecret: types.StringValue(clientSecret),
-        Scopes:       state.OAuth.Scopes,
+        Scopes:       scopesList,
+    }
+
+    // Only extract extra configuration if it was originally specified by the user
+    if hasExtraConfigInState {
+        // Extract all extra configuration keys from API response (excluding OAuth fields)
+        filteredExtraConfig, err := r.extractAllExtraConfigurationFromAPI(ctx, credential.Values)
+        if err != nil {
+            resp.Diagnostics.AddError(
+                "Error extracting extra configuration",
+                "Could not extract extra configuration from API response: "+err.Error(),
+            )
+            return
+        }
+        state.ExtraConfiguration = filteredExtraConfig
+    } else {
+        // If no extra configuration was specified, keep it as null
+        state.ExtraConfiguration = types.DynamicNull()
     }
 
     // Set the refreshed state
@@ -335,9 +592,10 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
         return
     }
 
-     scopesStr := ""
+    scopesStr := ""
 
-     if state.Provider.ValueString() == "custom" {
+    // Handle provider type validation for extra configuration
+    if state.Provider.ValueString() == "custom" {
         if !plan.OAuth.Scopes.IsNull() {
             resp.Diagnostics.AddError(
                 "Invalid scopes",
@@ -364,12 +622,28 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
         scopesStr = strings.Join(scopes, " ")
     }
 
-
     projectID := plan.ProjectID.ValueString()
     integrationID := plan.IntegrationID.ValueString()
     credentialID := state.ID.ValueString()
 
-    _, err := r.client.GetDecryptedCredential(ctx, projectID, credentialID)
+    // Retrieve the integration for validation
+    integration, err := r.client.GetIntegration(ctx, projectID, integrationID)
+    if err != nil {
+        resp.Diagnostics.AddError(
+            "Error retrieving integration",
+            "Could not retrieve integration, unexpected error: "+err.Error(),
+        )
+        return
+    }
+
+    // Validate extra configuration
+    validationDiags := r.validateExtraConfiguration(ctx, plan.ExtraConfiguration, integration)
+    resp.Diagnostics.Append(validationDiags...)
+    if resp.Diagnostics.HasError() {
+        return
+    }
+
+    _, err = r.client.GetDecryptedCredential(ctx, projectID, credentialID)
     if err != nil {
         resp.Diagnostics.AddError(
             "Error retrieving decrypted credential",
@@ -388,20 +662,27 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
         return
     }
 
+    // Merge OAuth and extra configuration values for update request
+    // This preserves type conversion consistency with Create operation
+    values, err := r.mergeCredentialValues(ctx, plan.OAuth, plan.ExtraConfiguration, scopesStr)
+    if err != nil {
+        resp.Diagnostics.AddError(
+            "Error merging credential values",
+            "Could not merge OAuth and extra configuration values: "+err.Error(),
+        )
+        return
+    }
+
     // Update the integration credentials
     updateCredReq := client.CreateIntegrationCredentialsRequest{
         Name:          email,
-        Values:        client.OAuthValues{
-            ClientID:     plan.OAuth.ClientID.ValueString(),
-            ClientSecret: plan.OAuth.ClientSecret.ValueString(),
-            Scopes:       scopesStr,
-        },
+        Values:        values,
         Provider:      state.Provider.ValueString(),
         Scheme:        state.Scheme.ValueString(),
         IntegrationID: integrationID,
     }
 
-    updatedCredential, err := r.client.CreateIntegrationCredentials(ctx, projectID, updateCredReq)
+    _, err = r.client.CreateIntegrationCredentials(ctx, projectID, updateCredReq)
     if err != nil {
         resp.Diagnostics.AddError(
             "Error updating integration credentials",
@@ -410,10 +691,88 @@ func (r *integrationCredentialsResource) Update(ctx context.Context, req resourc
         return
     }
 
+    // Read the updated credential to ensure state consistency
+    updatedDecryptedCredential, err := r.client.GetDecryptedCredential(ctx, projectID, credentialID)
+    if err != nil {
+        resp.Diagnostics.AddError(
+            "Error retrieving updated decrypted credential",
+            "Could not retrieve updated decrypted credential, unexpected error: "+err.Error(),
+        )
+        return
+    }
+
     // Set the ID, scheme, and provider in the state
     plan.ID = types.StringValue(credentialID)
-    plan.Scheme = types.StringValue(updatedCredential.Scheme)
-    plan.Provider = types.StringValue(updatedCredential.Provider)
+    plan.Scheme = types.StringValue(updatedDecryptedCredential.Scheme)
+    plan.Provider = types.StringValue(updatedDecryptedCredential.Provider)
+
+    // Extract and set the OAuth values from the updated credential
+    clientID, ok := updatedDecryptedCredential.Values["clientId"].(string)
+    if !ok {
+        resp.Diagnostics.AddError(
+            "Error extracting client ID from updated credential",
+            "Could not extract client ID from the updated decrypted credential values",
+        )
+        return
+    }
+
+    clientSecret, ok := updatedDecryptedCredential.Values["clientSecret"].(string)
+    if !ok {
+        resp.Diagnostics.AddError(
+            "Error extracting client secret from updated credential",
+            "Could not extract client secret from the updated decrypted credential values",
+        )
+        return
+    }
+
+    updatedScopesStr, ok := updatedDecryptedCredential.Values["scopes"].(string)
+    var scopesList types.List
+    if !ok {
+        scopesList = types.ListNull(types.StringType)
+    } else {
+        if updatedScopesStr != "" {
+            scopesArr := strings.Split(updatedScopesStr, " ")
+            var scopesAttr []attr.Value
+            for _, scope := range scopesArr {
+                scopesAttr = append(scopesAttr, types.StringValue(scope))
+            }
+            scopesList = types.ListValueMust(types.StringType, scopesAttr)
+        } else {
+            scopesList = types.ListNull(types.StringType)
+        }
+    }
+
+    // Update the OAuth block in the state
+    plan.OAuth = &oauthModel{
+        ClientID:     types.StringValue(clientID),
+        ClientSecret: types.StringValue(clientSecret),
+        Scopes:       scopesList,
+    }
+
+    // Check if extra configuration was originally specified by the user
+    hasExtraConfigInPlan := !plan.ExtraConfiguration.IsNull() && !plan.ExtraConfiguration.IsUnknown()
+    
+    // Add debug logging
+    tflog.Debug(ctx, "Update - hasExtraConfigInPlan", map[string]interface{}{"hasExtraConfigInPlan": hasExtraConfigInPlan})
+    tflog.Debug(ctx, "Update - API response values", map[string]interface{}{"values": updatedDecryptedCredential.Values})
+    
+    // Only extract extra configuration if it was originally specified by the user
+    if hasExtraConfigInPlan {
+        updatedExtraConfig, err := r.extractAllExtraConfigurationFromAPI(ctx, updatedDecryptedCredential.Values)
+        if err != nil {
+            resp.Diagnostics.AddError(
+                "Error extracting extra configuration from updated credential",
+                "Could not extract extra configuration from updated credential: "+err.Error(),
+            )
+            return
+        }
+        tflog.Debug(ctx, "Update - extracted extra config", map[string]interface{}{"updatedExtraConfig": updatedExtraConfig})
+        plan.ExtraConfiguration = updatedExtraConfig
+    } else {
+        // If no extra configuration was specified, keep it as null
+        tflog.Debug(ctx, "Update - setting extra config to null")
+        plan.ExtraConfiguration = types.DynamicNull()
+    }
 
     // Set state to fully populated data
     diags = resp.State.Set(ctx, plan)
