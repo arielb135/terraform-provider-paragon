@@ -137,5 +137,10 @@ func formatErrorMessage(resp *http.Response) string {
    	}
    }
 
+   // Check for specific CONNECT_CREDENTIAL_FIELD error and provide clearer message
+   if resp.StatusCode == 400 && strings.Contains(errorMessage, "CONNECT_CREDENTIAL_FIELD") && strings.Contains(errorMessage, "no ConnectCredential was supplied") {
+   	return "Deploy failed - userSettings field was used in the workflow meaning - you MUST go to the integration -> Test Connect Portal and perform a one time connection through the connect portal wizard, then rerun this - This is a one time manual task needed to be done."
+   }
+
    return errorMessage
 }
