@@ -124,11 +124,11 @@ func (c *Client) GetUserEmailFromToken() (string, error) {
 }
 
 type CreateIntegrationCredentialsRequest struct {
-    Name          string     `json:"name"`
-    Values        OAuthValues `json:"values"`
-    Provider      string     `json:"provider"`
-    Scheme        string     `json:"scheme"`
-    IntegrationID string     `json:"integrationId"`
+    Name          string         `json:"name"`
+    Values        map[string]any `json:"values"`
+    Provider      string         `json:"provider"`
+    Scheme        string         `json:"scheme"`
+    IntegrationID string         `json:"integrationId"`
 }
 
 type OAuthValues struct {
