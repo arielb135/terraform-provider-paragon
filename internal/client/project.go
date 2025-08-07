@@ -37,8 +37,8 @@ type Project struct {
 }
 
 type ProjectsResponse struct {
-    Items          []Project `json:"items"`
-    NextPageCursor *string   `json:"nextPageCursor"`
+    Items          []Project    `json:"items"`
+    NextPageCursor interface{}  `json:"nextPageCursor"`
 }
 
 func (c *Client) CreateProject(ctx context.Context, organizationID, projectName string) (*Project, *Project, error) {
@@ -113,7 +113,8 @@ func (c *Client) CreateProject(ctx context.Context, organizationID, projectName 
 }
 
 func (c *Client) GetProjects(ctx context.Context, teamID string) ([]Project, error) {
-    url := fmt.Sprintf("%s/projects?teamId=%s", c.baseURL, teamID)
+    // Use reasonable page size to get projects efficiently
+    url := fmt.Sprintf("%s/projects?teamId=%s&size=30", c.baseURL, teamID)
 
     req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
     if err != nil {
