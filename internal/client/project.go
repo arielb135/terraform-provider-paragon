@@ -28,14 +28,17 @@ type CreateProjectResponse struct {
 }
 
 type Project struct {
-    ID                string      `json:"id"`
-    Title             string      `json:"title"`
-    OwnerID           string      `json:"ownerId"`
-    TeamID            string      `json:"teamId"`
-    IsConnectProject  bool        `json:"isConnectProject"`
-    IsHidden          bool        `json:"isHidden"`
-    DateCreated       string      `json:"dateCreated"`
-    DateUpdated       string      `json:"dateUpdated"`
+    ID               string `json:"id"`
+    Title            string `json:"title"`
+    OwnerID          string `json:"ownerId"`
+    TeamID           string `json:"teamId"`
+    IsConnectProject bool   `json:"isConnectProject"`
+    IsHidden         bool   `json:"isHidden"`
+}
+
+type ProjectsResponse struct {
+    Items          []Project    `json:"items"`
+    NextPageCursor interface{}  `json:"nextPageCursor"`
 }
 
 func (c *Client) CreateProject(ctx context.Context, organizationID, projectName string) (*Project, *Project, error) {
@@ -77,26 +80,22 @@ func (c *Client) CreateProject(ctx context.Context, organizationID, projectName 
         if project.IsConnectProject {
             tflog.Debug(ctx, fmt.Sprintf("connect project ID: %s", project.ID))
             connectProject = &Project{
-                ID:                project.ID,
-                Title:             project.Title,
-                OwnerID:           project.OwnerID,
-                TeamID:            project.TeamID,
-                IsConnectProject:  project.IsConnectProject,
-                IsHidden:          project.IsHidden,
-                DateCreated:       project.DateCreated,
-                DateUpdated:       project.DateUpdated,
+                ID:               project.ID,
+                Title:            project.Title,
+                OwnerID:          project.OwnerID,
+                TeamID:           project.TeamID,
+                IsConnectProject: project.IsConnectProject,
+                IsHidden:         project.IsHidden,
             }
         } else {
             tflog.Debug(ctx, fmt.Sprintf("NON connect project ID (older): %s", project.ID))
             automateProject = &Project{
-                ID:                project.ID,
-                Title:             project.Title,
-                OwnerID:           project.OwnerID,
-                TeamID:            project.TeamID,
-                IsConnectProject:  project.IsConnectProject,
-                IsHidden:          project.IsHidden,
-                DateCreated:       project.DateCreated,
-                DateUpdated:       project.DateUpdated,
+                ID:               project.ID,
+                Title:            project.Title,
+                OwnerID:          project.OwnerID,
+                TeamID:           project.TeamID,
+                IsConnectProject: project.IsConnectProject,
+                IsHidden:         project.IsHidden,
             }
         }
     }
@@ -114,7 +113,8 @@ func (c *Client) CreateProject(ctx context.Context, organizationID, projectName 
 }
 
 func (c *Client) GetProjects(ctx context.Context, teamID string) ([]Project, error) {
-    url := fmt.Sprintf("%s/projects?teamId=%s", c.baseURL, teamID)
+    // Use reasonable page size to get projects efficiently
+    url := fmt.Sprintf("%s/projects?teamId=%s&size=9007199254740991", c.baseURL, teamID)
 
     req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
     if err != nil {
@@ -132,13 +132,13 @@ func (c *Client) GetProjects(ctx context.Context, teamID string) ([]Project, err
         return nil, fmt.Errorf("failed to get projects for team_id %s with status code: %d", teamID, resp.StatusCode)
     }
 
-    var projects []Project
-    err = json.NewDecoder(resp.Body).Decode(&projects)
+    var projectsResponse ProjectsResponse
+    err = json.NewDecoder(resp.Body).Decode(&projectsResponse)
     if err != nil {
         return nil, err
     }
 
-    return projects, nil
+    return projectsResponse.Items, nil
 }
 
 func (c *Client) GetProjectByID(ctx context.Context, projectID, teamID string) (*Project, error) {
