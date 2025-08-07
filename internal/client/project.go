@@ -114,7 +114,7 @@ func (c *Client) CreateProject(ctx context.Context, organizationID, projectName 
 
 func (c *Client) GetProjects(ctx context.Context, teamID string) ([]Project, error) {
     // Use reasonable page size to get projects efficiently
-    url := fmt.Sprintf("%s/projects?teamId=%s&size=30", c.baseURL, teamID)
+    url := fmt.Sprintf("%s/projects?teamId=%s&size=9007199254740991", c.baseURL, teamID)
 
     req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
     if err != nil {
