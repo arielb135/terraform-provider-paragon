@@ -131,13 +131,21 @@ func (d *integrationsDataSource) Read(ctx context.Context, req datasource.ReadRe
     for _, integration := range integrations {
         integrationType := integration.Type
         authenticationType := ""
-        if integration.Type == "custom" {
+        if integration.Type == "custom" && integration.CustomIntegration != nil {
             integrationType = integration.CustomIntegration.Slug
             authenticationType = integration.CustomIntegration.AuthenticationType
         }
+
+        var customIntegrationID types.String
+        if integration.CustomIntegrationID == nil {
+            customIntegrationID = types.StringNull()
+        } else {
+            customIntegrationID = types.StringValue(*integration.CustomIntegrationID)
+        }
+
         integrationModels[integrationType] = integrationModel{
             ID:                  types.StringValue(integration.ID),
-            CustomIntegrationID: types.StringValue(integration.CustomIntegrationID),
+            CustomIntegrationID: customIntegrationID,
             Type:                types.StringValue(integrationType),
             IsActive:            types.BoolValue(integration.IsActive),
             AuthenticationType: types.StringValue(authenticationType),

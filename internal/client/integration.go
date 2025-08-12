@@ -14,9 +14,11 @@ type Integration struct {
     DateCreated         string             `json:"dateCreated"`
     DateUpdated         string             `json:"dateUpdated"`
     ProjectID           string             `json:"projectId"`
-    CustomIntegrationID string             `json:"customIntegrationId"`
+    CustomIntegrationID *string            `json:"customIntegrationId"`
+    ResourceID          *string            `json:"resourceId"`
     Type                string             `json:"type"`
     IsActive            bool               `json:"isActive"`
+    Configs             []IntegrationConfig `json:"configs"`
     CustomIntegration   *CustomIntegration `json:"customIntegration"`
     ConnectedUserCount  int                `json:"connectedUserCount"`
 }
@@ -26,6 +28,7 @@ type IntegrationConfig struct {
     DateCreated  string                 `json:"dateCreated"`
     DateUpdated  string                 `json:"dateUpdated"`
     IntegrationID string                `json:"integrationId"`
+    Values       map[string]any         `json:"values"`
 }
 
 type CustomIntegration struct {
@@ -38,8 +41,14 @@ type CustomIntegration struct {
     Slug               string      `json:"slug"`
 }
 
+type IntegrationsResponse struct {
+    Items          []Integration `json:"items"`
+    NextPageCursor interface{}   `json:"nextPageCursor"`
+}
+
 func (c *Client) GetIntegrations(ctx context.Context, projectID string) ([]Integration, error) {
-    url := fmt.Sprintf("%s/projects/%s/integrations", c.baseURL, projectID)
+    // Request maximum page size to avoid pagination, mirroring the projects endpoint behavior - Not great as we don't implement pagination, but might be good enough.
+    url := fmt.Sprintf("%s/projects/%s/integrations?size=9007199254740991", c.baseURL, projectID)
 
     req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
     if err != nil {
@@ -57,13 +66,13 @@ func (c *Client) GetIntegrations(ctx context.Context, projectID string) ([]Integ
         return nil, fmt.Errorf("failed to get integrations with status code: %d", resp.StatusCode)
     }
 
-    var integrations []Integration
-    err = json.NewDecoder(resp.Body).Decode(&integrations)
+    var integrationsResponse IntegrationsResponse
+    err = json.NewDecoder(resp.Body).Decode(&integrationsResponse)
     if err != nil {
         return nil, err
     }
 
-    return integrations, nil
+    return integrationsResponse.Items, nil
 }
 
 type Credential struct {
